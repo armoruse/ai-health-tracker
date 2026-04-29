@@ -497,6 +497,7 @@
     let logs = JSON.parse(localStorage.getItem('aht_logs') || '[]');
 
     const DAILY_GOALS = { calorie: 2000, protein: 150, carbs: 250, fat: 65 };
+    const GEMINI_API_KEY = 'AIzaSyCILSIrXYQCe1Dgxdtv2jxvbqPoJY7W7e0';
 
     // ==================== DOM ====================
     const $ = id => document.getElementById(id);
@@ -572,6 +573,37 @@
       document.querySelectorAll('.tag-item').forEach(t => t.classList.remove('selected'));
       el.classList.add('selected');
       selectedTag = el.dataset.tag;
+    }
+
+    // ==================== Gemini Vision API ====================
+    async function analyzeImageWithGemini(imageDataUrl, tag) {
+      const base64Data = imageDataUrl.split(',')[1];
+      const mimeType = imageDataUrl.split(',')[0].match(/:(.*?);/)[1];
+      const tagPrompt = (tag === 'strength' || tag === 'cardio')
+        ? '分析這張運動照片，判斷是什麼運動，估算消耗熱量。'
+        : '分析這張食物照片，判斷是什麼食物，估算每份的熱量(kcal)、蛋白質(g)、碳水(g)、脂肪(g)。';
+      const prompt = tagPrompt + ' 請回傳JSON：{"name":"名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字}';
+      try {
+        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=' + GEMINI_API_KEY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Data } }] }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 200 }
+          })
+        });
+        const data = await resp.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const jsonMatch = text.match(/\{[^{}]*\}/);
+        if (jsonMatch) {
+          const r = JSON.parse(jsonMatch[0]);
+          return { name: r.name || 'AI辨識', kcal: Number(r.kcal)||300, protein: Number(r.protein)||15, carbs: Number(r.carbs)||30, fat: Number(r.fat)||10 };
+        }
+        return { name: 'AI辨識', kcal: 300, protein: 15, carbs: 30, fat: 10 };
+      } catch (e) {
+        console.error('Gemini Error:', e);
+        return { name: '辨識失敗', kcal: 200, protein: 10, carbs: 25, fat: 5 };
+      }
     }
 
     // ==================== Smart AI Analysis ====================
@@ -679,7 +711,9 @@
           const w = workoutDB.find(x => x.name === pick) || { name: pick, kcal: 250, protein: 0, carbs: 0, fat: 0 };
           items.push(w);
         } else {
-          items.push({ name: '（照片辨識中，待串接 AI）', kcal: 300, protein: 15, carbs: 30, fat: 10 });
+          // Use Gemini to analyze images
+          const geminiResult = await analyzeImageWithGemini(selectedImages[0], tag);
+          items.push(geminiResult);
         }
       }
 
@@ -713,10 +747,26 @@
       submitBtn.disabled = true;
       submitBtn.innerHTML = '<span class="spinner"></span>AI 分析中...';
 
-      // Simulate API delay
-      await new Promise(r => setTimeout(r, 2000));
+      let result;
 
-      const result = simulateAIAnalysis(text, selectedImages.length, selectedTag);
+      if (selectedImages.length > 0 && !text) {
+        // Image only - call Gemini API
+        submitBtn.innerHTML = '<span class="spinner"></span>正在辨識照片...';
+        const geminiItem = await analyzeImageWithGemini(selectedImages[0], selectedTag);
+        const isWorkout = (selectedTag === 'strength' || selectedTag === 'cardio');
+        result = {
+          category: isWorkout ? 'workout' : 'diet',
+          items: [geminiItem],
+          summary: isWorkout
+            ? `${geminiItem.name} 完成！消耗約 ${geminiItem.kcal} kcal。`
+            : `辨識完成：${geminiItem.name}，共 ${geminiItem.kcal} kcal。`,
+          totals: { kcal: geminiItem.kcal, protein: geminiItem.protein, carbs: geminiItem.carbs, fat: geminiItem.fat },
+        };
+      } else {
+        // Text or both - keyword matching
+        await new Promise(r => setTimeout(r, 1500));
+        result = await simulateAIAnalysis(text, selectedImages.length, selectedTag);
+      }
 
       const tagNames = { breakfast: '🌅 早餐', lunch: '☀️ 午餐', dinner: '🌙 晚餐', snack: '🍪 點心', strength: '🏋️ 重訓', cardio: '🏃 有氧' };
 
