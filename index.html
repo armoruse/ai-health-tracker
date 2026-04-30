@@ -425,6 +425,140 @@
       transition: background 0.2s;
     }
     .delete-btn:hover { background: #fef2f2; }
+
+    /* ========== Date Picker ========== */
+    .date-section {
+      margin-top: 20px;
+      margin-bottom: 4px;
+    }
+    .date-quick-btns {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .date-quick-btn {
+      flex: 1;
+      padding: 10px 8px;
+      border: 2px solid #e2e8f0;
+      border-radius: 10px;
+      background: #f8fafc;
+      color: #475569;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.2s;
+    }
+    .date-quick-btn:hover {
+      border-color: #0d9488;
+      color: #0d9488;
+    }
+    .date-quick-btn.active {
+      border-color: #0d9488;
+      background: #0d9488;
+      color: #fff;
+    }
+    .date-input-wrapper {
+      position: relative;
+    }
+    .date-input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 2px solid #e2e8f0;
+      border-radius: 12px;
+      font-size: 14px;
+      font-family: inherit;
+      background: #f8fafc;
+      color: #1a1a2e;
+      transition: border-color 0.2s;
+    }
+    .date-input:focus {
+      outline: none;
+      border-color: #0d9488;
+      background: #fff;
+    }
+
+    /* ========== Dashboard Date Filter ========== */
+    .dashboard-filter {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .filter-date-input {
+      flex: 1;
+      min-width: 140px;
+      padding: 10px 12px;
+      border: 2px solid #e2e8f0;
+      border-radius: 10px;
+      font-size: 13px;
+      font-family: inherit;
+      background: #f8fafc;
+    }
+    .filter-date-input:focus {
+      outline: none;
+      border-color: #0d9488;
+    }
+    .filter-quick-btns {
+      display: flex;
+      gap: 6px;
+    }
+    .filter-quick-btn {
+      padding: 8px 12px;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      background: #fff;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .filter-quick-btn:hover {
+      border-color: #0d9488;
+    }
+    .filter-quick-btn.active {
+      border-color: #0d9488;
+      background: #0d9488;
+      color: #fff;
+    }
+    .summary-card {
+      background: linear-gradient(135deg, #f0fdfa, #ecfeff);
+      padding: 16px;
+      border-radius: 14px;
+      margin-bottom: 20px;
+      border: 1px solid #ccfbf1;
+    }
+    .summary-header {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 14px;
+      color: #0f766e;
+    }
+    .summary-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .summary-stat {
+      text-align: center;
+      padding: 10px 6px;
+      background: #fff;
+      border-radius: 10px;
+    }
+    .summary-stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .summary-stat-label {
+      font-size: 10px;
+      color: #64748b;
+      margin-top: 2px;
+    }
   </style>
 </head>
 <body>
@@ -461,6 +595,20 @@
         <input type="file" id="fileInput" accept="image/*" multiple hidden>
         <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden>
 
+        <!-- Date Selection -->
+        <div class="date-section">
+          <div class="section-title">📅 選擇日期</div>
+          <div class="section-desc">選擇這筆紀錄的日期</div>
+          <div class="date-quick-btns">
+            <button class="date-quick-btn active" onclick="selectDate('today', this)">📌 今天</button>
+            <button class="date-quick-btn" onclick="selectDate('yesterday', this)">⏪ 昨天</button>
+            <button class="date-quick-btn" onclick="selectDate('custom', this)">📆 自訂</button>
+          </div>
+          <div class="date-input-wrapper" id="customDateWrapper" style="display:none;">
+            <input type="date" class="date-input" id="dateInput">
+          </div>
+        </div>
+
         <!-- Tag Selection -->
         <div style="margin-top: 20px;">
           <div class="section-title">🏷️ 選擇標籤</div>
@@ -495,6 +643,7 @@
       <!-- Tab: Dashboard -->
       <div class="tab-content" id="tab-dashboard">
         <div id="dashboardContent"></div>
+        <div id="dateSummaryModal" style="display:none;"></div>
       </div>
     </div>
   </div>
@@ -506,9 +655,36 @@
     // ==================== State ====================
     let selectedImages = [];
     let logs = JSON.parse(localStorage.getItem('aht_logs') || '[]');
+    let selectedDateMode = 'today'; // today, yesterday, custom
+    let selectedLogDate = null; // ISO date string for the selected date
+    let dashboardFilterDate = null; // null = show all, or a dayLabel string
 
-    const DAILY_GOALS = { calorie: 2000, protein: 150, carbs: 250, fat: 65 };
+    const DAILY_GOALS = { calorie: 2000, protein: 150, carbs: 250, fat: 65, fiber: 30 };
     const GEMINI_API_KEY = 'AIzaSyCILSIrXYQCe1Dgxdtv2jxvbqPoJY7W7e0';
+
+    // ==================== Date Helpers ====================
+    function getDayLabel(date) {
+      return date.toLocaleDateString('zh-TW');
+    }
+    function getTodayLabel() {
+      return getDayLabel(new Date());
+    }
+    function getYesterdayLabel() {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      return getDayLabel(d);
+    }
+    function getSelectedDayLabel() {
+      if (selectedDateMode === 'today') return getTodayLabel();
+      if (selectedDateMode === 'yesterday') return getYesterdayLabel();
+      // custom
+      const input = $('dateInput');
+      if (input.value) {
+        const d = new Date(input.value);
+        return getDayLabel(d);
+      }
+      return getTodayLabel();
+    }
 
     // ==================== DOM ====================
     const $ = id => document.getElementById(id);
@@ -575,6 +751,17 @@
     function removeImage(index) {
       selectedImages.splice(index, 1);
       renderImagePreview();
+    }
+
+    // ==================== Date Selection ====================
+    function selectDate(mode, btn) {
+      selectedDateMode = mode;
+      document.querySelectorAll('.date-quick-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      $('customDateWrapper').style.display = mode === 'custom' ? 'block' : 'none';
+      if (mode !== 'custom') {
+        // auto-update
+      }
     }
 
     // ==================== Tag Selection ====================
@@ -784,7 +971,7 @@
       const log = {
         id: Date.now().toString(),
         date: new Date().toISOString(),
-        dayLabel: new Date().toLocaleDateString('zh-TW'),
+        dayLabel: getSelectedDayLabel(),
         tag: selectedTag,
         tagLabel: tagNames[selectedTag] || '',
         inputType: selectedImages.length > 0 && text ? 'photo_text' : 'text_only',
@@ -830,78 +1017,174 @@
         return;
       }
 
-      // Today totals
-      const today = new Date().toLocaleDateString('zh-TW');
-      const todayLogs = logs.filter(l => l.dayLabel === today);
-      const todayTotals = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
-      todayLogs.forEach(l => {
-        todayTotals.kcal += l.totals.kcal;
-        todayTotals.protein += l.totals.protein;
-        todayTotals.carbs += l.totals.carbs;
-        todayTotals.fat += l.totals.fat;
-      });
+      // Get unique dates
+      const uniqueDates = [...new Set(logs.map(l => l.dayLabel))].reverse();
 
-      let html = `
-        <!-- Today Progress -->
-        <div style="background: linear-gradient(135deg, #f0fdfa, #ecfeff); padding: 16px; border-radius: 14px; margin-bottom: 20px; border: 1px solid #ccfbf1;">
-          <div style="font-size: 14px; font-weight: 700; margin-bottom: 14px; color: #0f766e;">
-            📊 今日進度
+      // Build filter
+      let filterHtml = `
+        <div class="dashboard-filter">
+          <div class="filter-quick-btns">
+            <button class="filter-quick-btn active" onclick="filterDashboard(null, this)">📋 全部</button>
+            <button class="filter-quick-btn" onclick="filterDashboard('${getTodayLabel()}', this)">📌 今天</button>
+            <button class="filter-quick-btn" onclick="filterDashboard('${getYesterdayLabel()}', this)">⏪ 昨天</button>
           </div>
-          ${renderProgressBar('熱量 kcal', todayTotals.kcal, DAILY_GOALS.calorie, 'fill-calorie')}
-          ${renderProgressBar('蛋白質 g', todayTotals.protein, DAILY_GOALS.protein, 'fill-protein')}
-          ${renderProgressBar('碳水 g', todayTotals.carbs, DAILY_GOALS.carbs, 'fill-carbs')}
-          ${renderProgressBar('脂肪 g', todayTotals.fat, DAILY_GOALS.fat, 'fill-fat')}
+          <input type="text" class="filter-date-input" placeholder="🔍 輸入日期篩選..." id="dashboardDateFilter" oninput="filterDashboardByInput(this.value)">
         </div>
-
-        <!-- Log List -->
-        <div style="font-size: 14px; font-weight: 700; margin-bottom: 12px;">📝 近期紀錄</div>
       `;
 
-      logs.forEach(log => {
-        html += `
-          <div class="log-card">
-            <div class="log-header">
-              <span class="log-date">${log.dayLabel}</span>
-              <div style="display:flex;align-items:center;gap:8px;">
-                ${log.tagLabel ? `<span class="log-category cat-tag">${log.tagLabel}</span>` : ''}
-                <span class="log-category cat-${log.category}">
-                  ${log.category === 'diet' ? '🍽️ 飲食' : '🏃 運動'}
-                </span>
-                <button class="delete-btn" onclick="deleteLog('${log.id}')">🗑️</button>
+      // Get currently filtered logs
+      let displayLogs = logs;
+      if (dashboardFilterDate) {
+        displayLogs = logs.filter(l => l.dayLabel === dashboardFilterDate);
+      }
+
+      // Calculate totals for the displayed date
+      let summaryHtml = '';
+      if (dashboardFilterDate && displayLogs.length > 0) {
+        const totals = calcDayTotals(displayLogs);
+        const workoutCount = displayLogs.filter(l => l.category === 'workout').length;
+        const dietCount = displayLogs.filter(l => l.category === 'diet').length;
+        summaryHtml = `
+          <div class="summary-card">
+            <div class="summary-header">📊 ${dashboardFilterDate} 總整理</div>
+            <div class="summary-stats">
+              <div class="summary-stat">
+                <div class="summary-stat-value">${Math.round(totals.kcal)}</div>
+                <div class="summary-stat-label">熱量 kcal</div>
+              </div>
+              <div class="summary-stat">
+                <div class="summary-stat-value">${Math.round(totals.protein)}</div>
+                <div class="summary-stat-label">蛋白質 g</div>
+              </div>
+              <div class="summary-stat">
+                <div class="summary-stat-value">${Math.round(totals.carbs)}</div>
+                <div class="summary-stat-label">碳水 g</div>
+              </div>
+              <div class="summary-stat">
+                <div class="summary-stat-value">${workoutCount > 0 ? Math.round(totals.workoutKcal) : '-'}</div>
+                <div class="summary-stat-label">運動消耗</div>
               </div>
             </div>
-            <div class="log-summary">${log.summary}</div>
-            <div class="log-stats">
-              <div class="stat-box">
-                <div class="stat-value">${Math.round(log.totals.kcal)}</div>
-                <div class="stat-label">kcal</div>
-              </div>
-              <div class="stat-box">
-                <div class="stat-value">${Math.round(log.totals.protein)}</div>
-                <div class="stat-label">蛋白質</div>
-              </div>
-              <div class="stat-box">
-                <div class="stat-value">${Math.round(log.totals.carbs)}</div>
-                <div class="stat-label">碳水</div>
-              </div>
-              <div class="stat-box">
-                <div class="stat-value">${Math.round(log.totals.fat)}</div>
-                <div class="stat-label">脂肪</div>
-              </div>
+            <div style="display:flex;gap:8px;margin-bottom:12px;">
+              <span style="font-size:12px;padding:4px 10px;background:#fef3c7;color:#92400e;border-radius:20px;font-weight:600;">🍽️ 飲食 ${dietCount} 筆</span>
+              <span style="font-size:12px;padding:4px 10px;background:#dbeafe;color:#1e40af;border-radius:20px;font-weight:600;">🏃 運動 ${workoutCount} 筆</span>
             </div>
-            <div class="log-items">
-              ${log.items.map(item => `
-                <div class="log-item">
-                  <span class="item-name">${item.name}</span>
-                  <span class="item-kcal">${item.kcal} kcal</span>
-                </div>
-              `).join('')}
-            </div>
+            ${renderProgressBar('熱量 kcal', totals.kcal, DAILY_GOALS.calorie, 'fill-calorie')}
+            ${renderProgressBar('蛋白質 g', totals.protein, DAILY_GOALS.protein, 'fill-protein')}
+            ${renderProgressBar('碳水 g', totals.carbs, DAILY_GOALS.carbs, 'fill-carbs')}
+            ${renderProgressBar('脂肪 g', totals.fat, DAILY_GOALS.fat, 'fill-fat')}
           </div>
         `;
+      }
+
+      // Available dates list
+      let datesHtml = `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:14px;font-weight:700;margin-bottom:10px;">📅 可用日期</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        `;
+      uniqueDates.forEach(d => {
+        const count = logs.filter(l => l.dayLabel === d).length;
+        const isActive = (dashboardFilterDate === d);
+        datesHtml += `<button class="filter-quick-btn ${isActive ? 'active' : ''}" onclick="filterDashboard('${d}', document.querySelectorAll('.filter-quick-btn'))">${d} (${count})</button>`;
       });
+      datesHtml += `</div></div>`;
+
+      let html = filterHtml + summaryHtml + datesHtml;
+
+      // Log list
+      if (displayLogs.length === 0) {
+        html += `
+          <div class="empty-state">
+            <div class="emoji">📭</div>
+            <p>${dashboardFilterDate ? '該日期沒有紀錄' : '還沒有任何紀錄'}</p>
+          </div>
+        `;
+      } else {
+        html += `<div style="font-size:14px;font-weight:700;margin-bottom:12px;">📝 ${dashboardFilterDate || '所有'}紀錄</div>`;
+        displayLogs.forEach(log => {
+          html += `
+            <div class="log-card">
+              <div class="log-header">
+                <span class="log-date">${log.dayLabel}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  ${log.tagLabel ? `<span class="log-category cat-tag">${log.tagLabel}</span>` : ''}
+                  <span class="log-category cat-${log.category}">
+                    ${log.category === 'diet' ? '🍽️ 飲食' : '🏃 運動'}
+                  </span>
+                  <button class="delete-btn" onclick="deleteLog('${log.id}')">🗑️</button>
+                </div>
+              </div>
+              <div class="log-summary">${log.summary}</div>
+              <div class="log-stats">
+                <div class="stat-box">
+                  <div class="stat-value">${Math.round(log.totals.kcal)}</div>
+                  <div class="stat-label">kcal</div>
+                </div>
+                <div class="stat-box">
+                  <div class="stat-value">${Math.round(log.totals.protein)}</div>
+                  <div class="stat-label">蛋白質</div>
+                </div>
+                <div class="stat-box">
+                  <div class="stat-value">${Math.round(log.totals.carbs)}</div>
+                  <div class="stat-label">碳水</div>
+                </div>
+                <div class="stat-box">
+                  <div class="stat-value">${Math.round(log.totals.fat)}</div>
+                  <div class="stat-label">脂肪</div>
+                </div>
+              </div>
+              <div class="log-items">
+                ${log.items.map(item => `
+                  <div class="log-item">
+                    <span class="item-name">${item.name}</span>
+                    <span class="item-kcal">${item.kcal} kcal</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        });
+      }
 
       container.innerHTML = html;
+    }
+
+    function calcDayTotals(dayLogs) {
+      let totals = { kcal: 0, protein: 0, carbs: 0, fat: 0, workoutKcal: 0 };
+      dayLogs.forEach(l => {
+        totals.kcal += l.totals.kcal;
+        totals.protein += l.totals.protein;
+        totals.carbs += l.totals.carbs;
+        totals.fat += l.totals.fat;
+        if (l.category === 'workout') {
+          totals.workoutKcal += l.totals.kcal;
+        }
+      });
+      return totals;
+    }
+
+    function filterDashboard(dateLabel, btnOrList) {
+      dashboardFilterDate = dateLabel;
+      // Update active states
+      document.querySelectorAll('.filter-quick-btn').forEach(b => b.classList.remove('active'));
+      if (typeof btnOrList === 'object' && btnOrList.length === undefined) {
+        // single button
+        btnOrList.classList.add('active');
+      }
+      // Also update the filter input
+      const filterInput = $('dashboardDateFilter');
+      if (filterInput) filterInput.value = '';
+      renderDashboard();
+    }
+
+    function filterDashboardByInput(value) {
+      if (!value.trim()) {
+        dashboardFilterDate = null;
+      } else {
+        dashboardFilterDate = value.trim();
+      }
+      renderDashboard();
     }
 
     function renderProgressBar(label, current, goal, fillClass) {
