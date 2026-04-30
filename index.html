@@ -714,7 +714,7 @@
       Array.from(files).forEach(file => {
         if (!file.type.startsWith('image/')) return;
         // Compress via canvas
-        compressImage(file, 1920, 0.8, (dataUrl) => {
+        compressImage(file, 800, 0.6, (dataUrl) => {
           selectedImages.push(dataUrl);
           renderImagePreview();
         });
@@ -780,14 +780,16 @@
       const tagPrompt = (tag === 'strength' || tag === 'cardio')
         ? '分析這張運動照片，判斷是什麼運動，估算消耗熱量。'
         : '你是一位營養師。請分析這張食物照片，辨識照片中有哪些食物。';
-      const prompt = tagPrompt + '\n\n只回傳JSON陣列，不要有說明文字：\n[{"name":"食物","kcal":數字,"protein":數字,"carbs":數字,"fat":數字}]';
+      const prompt = (tag === 'strength' || tag === 'cardio') 
+        ? 'Identify workout in image. Return ONLY JSON array: [{"name":"workout","kcal":num,"protein":0,"carbs":0,"fat":0}]'
+        : 'Identify food in image. Return ONLY JSON array: [{"name":"food","kcal":num,"protein":num,"carbs":num,"fat":num}]';
       try {
-        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + GEMINI_API_KEY, {
+        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=' + GEMINI_API_KEY, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Data } }] }],
-            generationConfig: { temperature: 0, maxOutputTokens: 512 }
+            generationConfig: { temperature: 0, maxOutputTokens: 256 }
           })
         });
 
