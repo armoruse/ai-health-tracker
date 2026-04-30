@@ -660,7 +660,7 @@
     let dashboardFilterDate = null; // null = show all, or a dayLabel string
 
     const DAILY_GOALS = { calorie: 2000, protein: 150, carbs: 250, fat: 65, fiber: 30 };
-    const GEMINI_API_KEY = 'AIzaSyAYez5YMYfw0Gtpsz_cozeOLgcpX4NNbVw';
+    let OPENAI_API_KEY = localStorage.getItem('aht_openai_key') || '';
 
     // ==================== Date Helpers ====================
     function getDayLabel(date) {
@@ -773,32 +773,75 @@
       selectedTag = el.dataset.tag;
     }
 
-    // ==================== Gemini Vision API ====================
-    async function analyzeImageWithGemini(imageDataUrl, tag) {
-      const base64Data = imageDataUrl.split(',')[1];
-      const mimeType = imageDataUrl.split(',')[0].match(/:(.*?);/)[1];
-      const tagPrompt = (tag === 'strength' || tag === 'cardio')
-        ? '分析這張運動照片，判斷是什麼運動，估算消耗熱量。'
-        : '你是一位營養師。請分析這張食物照片，辨識照片中有哪些食物。';
-      const prompt = (tag === 'strength' || tag === 'cardio') 
-        ? 'Identify workout in image. Return ONLY JSON array: [{"name":"workout","kcal":num,"protein":0,"carbs":0,"fat":0}]'
-        : 'Identify food in image. Return ONLY JSON array: [{"name":"food","kcal":num,"protein":num,"carbs":num,"fat":num}]';
+    // ==================== API Key Check ====================
+    function checkApiKey() {
+      if (!OPENAI_API_KEY || OPENAI_API_KEY.trim() === '') {
+        showApiKeyModal();
+        return false;
+      }
+      return true;
+    }
+
+    function showApiKeyModal() {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.id = 'apiKeyModal';
+      overlay.innerHTML = `
+        <div class="modal" style="border-radius: 20px; margin: auto; max-width: 400px;">
+          <h3>🔑 設定 OpenAI API Key</h3>
+          <p style="font-size: 13px; color: #64748b; margin-bottom: 14px;">
+            第一次使用，請輸入你的 OpenAI API Key。<br>
+            Key 只會存在你的瀏覽器，不會上傳到任何地方。
+          </p>
+          <input type="password" id="apiKeyInput" class="text-input" style="min-height:50px;margin-bottom:14px;" placeholder="sk-proj-...">
+          <button class="submit-btn" style="margin-top:0;" onclick="saveApiKey()">💾 儲存並使用</button>
+          <p style="font-size: 11px; color: #94a3b8; margin-top: 10px; text-align: center;">
+            <a href="https://platform.openai.com/api-keys" target="_blank">點擊取得 API Key</a>
+          </p>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      overlay.classList.add('show');
+    }
+
+    function saveApiKey() {
+      const input = document.getElementById('apiKeyInput');
+      if (input.value.trim()) {
+        OPENAI_API_KEY = input.value.trim();
+        localStorage.setItem('aht_openai_key', OPENAI_API_KEY);
+        const modal = document.getElementById('apiKeyModal');
+        if (modal) modal.remove();
+        showToast('✅ API Key 已儲存！');
+      }
+    }
+
+    // ==================== OpenAI Vision API ====================
+    async function analyzeImageWithOpenAI(imageDataUrl, tag) {
+      const prompt = (tag === 'strength' || tag === 'cardio')
+        ? 'What exercise/workout is shown in this image? Estimate calories burned. Return ONLY a JSON array: [{"name":"exercise name","kcal":number,"protein":0,"carbs":0,"fat":0}]'
+        : 'You are a nutritionist. Identify all food items in this photo. Return ONLY a JSON array: [{"name":"food name","kcal":number,"protein":number,"carbs":number,"fat":number}]';
       try {
-        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=' + GEMINI_API_KEY, {
+        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + OPENAI_API_KEY
+          },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Data } }] }],
-            generationConfig: { temperature: 0, maxOutputTokens: 256 }
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'user', content: [
+                { type: 'text', text: prompt },
+                { type: 'image_url', image_url: { url: imageDataUrl, detail: 'low' } }
+              ]}
+            ],
+            max_tokens: 500,
+            temperature: 0
           })
         });
 
         if (!resp.ok) {
           const errText = await resp.text();
-          if (resp.status === 429) {
-            return [{ name: '⚠️ API配額已用完，請稍後再試', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
-          }
-          // Try to extract error message from response
           let errorMsg = `HTTP ${resp.status}`;
           try {
             const errJson = JSON.parse(errText);
@@ -810,70 +853,37 @@
         }
 
         const data = await resp.json();
-
-        // Check for errors in response
-        if (data.error) {
-          if (data.error.message && data.error.message.includes('quota')) {
-            return [{ name: '⚠️ API配額已用完，請稍後再試', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
-          }
-          return [{ name: '辨識失敗(API錯誤)', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
-        }
-
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-        // Check for finishReason (might be blocked/safety filter)
-        const finishReason = data.candidates?.[0]?.finishReason;
-        if (finishReason && finishReason !== 'STOP') {
-          return [{ name: `辨識失敗(${finishReason})`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
-        }
+        const text = data.choices?.[0]?.message?.content || '';
 
         if (!text || text.trim().length === 0) {
           return [{ name: '辨識失敗(空回應)', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
         }
 
-        // Clean up markdown code blocks if present
+        // Clean up markdown code blocks
         let cleanedText = text.replace(/```(?:json)?\s*/g, '').replace(/```/g, '').trim();
 
-        // Try to parse as array first
+        // Try to parse as array
         const arrayMatch = cleanedText.match(/\[[\s\S]*\]/);
         if (arrayMatch) {
           try {
             const items = JSON.parse(arrayMatch[0]);
             if (Array.isArray(items) && items.length > 0) {
-              const result = items.map(item => ({
-                name: item.name || item.food || 'AI辨識',
-                kcal: Number(item.kcal) || Number(item.calories) || 200,
+              return items.map(item => ({
+                name: item.name || 'AI辨識',
+                kcal: Number(item.kcal) || 200,
                 protein: Number(item.protein) || 10,
-                carbs: Number(item.carbs) || Number(item.carbohydrates) || 20,
+                carbs: Number(item.carbs) || 20,
                 fat: Number(item.fat) || 5
               }));
-              return result;
             }
           } catch(e) {
-            return [{ name: `辨識失敗(解析: ${cleanedText.substring(0,30)}...)`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+            return [{ name: `辨識失敗(解析錯誤)`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
           }
         }
 
-        // Fallback: try single object
-        const objMatch = cleanedText.match(/\{[\s\S]*\}/);
-        if (objMatch) {
-          try {
-            const r = JSON.parse(objMatch[0]);
-            return [{
-              name: r.name || r.food || 'AI辨識',
-              kcal: Number(r.kcal) || Number(r.calories) || 300,
-              protein: Number(r.protein) || 15,
-              carbs: Number(r.carbs) || Number(r.carbohydrates) || 30,
-              fat: Number(r.fat) || 10
-            }];
-          } catch(e) {
-            // ignore
-          }
-        }
-
-        return [{ name: `辨識失敗(解析: ${cleanedText.substring(0,30)}...)`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+        return [{ name: `辨識失敗(非JSON格式)`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
       } catch (e) {
-        return [{ name: `辨識失敗(例外)`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+        return [{ name: `辨識失敗(網路錯誤)`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
       }
     }
 
@@ -1035,9 +1045,9 @@
           const w = workoutDB.find(x => x.name === pick) || { name: pick, kcal: 250, protein: 0, carbs: 0, fat: 0 };
           items.push(w);
         } else {
-          // Use Gemini to analyze images - now returns array
-          const geminiResults = await analyzeImageWithGemini(selectedImages[0], tag);
-          items.push(...geminiResults);
+          // Use OpenAI Vision API to analyze images
+          const aiResults = await analyzeImageWithOpenAI(selectedImages[0], tag);
+          items.push(...aiResults);
         }
       }
 
@@ -1061,6 +1071,11 @@
 
     // ==================== Submit ====================
     async function submitLog() {
+      if (!checkApiKey()) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '🚀 送出並分析';
+        return;
+      }
       const text = textInput.value.trim();
       if (!text && selectedImages.length === 0) {
         showToast('⚠️ 請輸入文字或上傳照片');
@@ -1074,18 +1089,18 @@
       let result;
 
       if (selectedImages.length > 0 && !text) {
-        // Image only - call Gemini API
+        // Image only - call OpenAI Vision API
         submitBtn.innerHTML = '<span class="spinner"></span>正在辨識照片...';
-        const geminiItems = await analyzeImageWithGemini(selectedImages[0], selectedTag);
+        const aiItems = await analyzeImageWithOpenAI(selectedImages[0], selectedTag);
         const isWorkout = (selectedTag === 'strength' || selectedTag === 'cardio');
-        const totalKcal = geminiItems.reduce((s, i) => s + i.kcal, 0);
-        const totalProtein = geminiItems.reduce((s, i) => s + i.protein, 0);
-        const totalCarbs = geminiItems.reduce((s, i) => s + i.carbs, 0);
-        const totalFat = geminiItems.reduce((s, i) => s + i.fat, 0);
-        const itemNameList = geminiItems.map(i => i.name).join('、');
+        const totalKcal = aiItems.reduce((s, i) => s + i.kcal, 0);
+        const totalProtein = aiItems.reduce((s, i) => s + i.protein, 0);
+        const totalCarbs = aiItems.reduce((s, i) => s + i.carbs, 0);
+        const totalFat = aiItems.reduce((s, i) => s + i.fat, 0);
+        const itemNameList = aiItems.map(i => i.name).join('、');
         result = {
           category: isWorkout ? 'workout' : 'diet',
-          items: geminiItems,
+          items: aiItems,
           summary: isWorkout
             ? `${itemNameList} 完成！消耗約 ${Math.round(totalKcal)} kcal。`
             : `辨識完成：${itemNameList}，共 ${Math.round(totalKcal)} kcal。`,
