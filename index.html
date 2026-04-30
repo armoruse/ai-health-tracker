@@ -796,7 +796,15 @@
           if (resp.status === 429) {
             return [{ name: '⚠️ API配額已用完，請稍後再試', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
           }
-          return [{ name: `辨識失敗(HTTP ${resp.status})`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+          // Try to extract error message from response
+          let errorMsg = `HTTP ${resp.status}`;
+          try {
+            const errJson = JSON.parse(errText);
+            if (errJson.error && errJson.error.message) {
+              errorMsg = errJson.error.message.substring(0, 80);
+            }
+          } catch(e) {}
+          return [{ name: `辨識失敗(${errorMsg})`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
         }
 
         const data = await resp.json();
