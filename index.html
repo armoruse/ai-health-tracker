@@ -790,35 +790,40 @@
             generationConfig: { temperature: 0, maxOutputTokens: 1024 }
           })
         });
-        
+
         if (!resp.ok) {
           const errText = await resp.text();
-          const errMsg = errText.substring(0, 100);
+          if (resp.status === 429) {
+            return [{ name: '⚠️ API配額已用完，請稍後再試', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+          }
           return [{ name: `辨識失敗(HTTP ${resp.status})`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
         }
-        
+
         const data = await resp.json();
-        
+
         // Check for errors in response
         if (data.error) {
-          return [{ name: `辨識失敗(${data.error.message || 'API錯誤'})`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+          if (data.error.message && data.error.message.includes('quota')) {
+            return [{ name: '⚠️ API配額已用完，請稍後再試', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+          }
+          return [{ name: '辨識失敗(API錯誤)', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
         }
-        
+
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        
+
         // Check for finishReason (might be blocked/safety filter)
         const finishReason = data.candidates?.[0]?.finishReason;
         if (finishReason && finishReason !== 'STOP') {
           return [{ name: `辨識失敗(${finishReason})`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
         }
-        
+
         if (!text || text.trim().length === 0) {
           return [{ name: '辨識失敗(空回應)', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
         }
-        
+
         // Clean up markdown code blocks if present
         let cleanedText = text.replace(/```(?:json)?\s*/g, '').replace(/```/g, '').trim();
-        
+
         // Try to parse as array first
         const arrayMatch = cleanedText.match(/\[[\s\S]*\]/);
         if (arrayMatch) {
@@ -832,35 +837,33 @@
                 carbs: Number(item.carbs) || Number(item.carbohydrates) || 20,
                 fat: Number(item.fat) || 5
               }));
-              console.log('Parsed items:', result);
               return result;
             }
           } catch(e) {
-            // JSON parse failed, try to show raw text
             return [{ name: `辨識失敗(解析: ${cleanedText.substring(0,30)}...)`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
           }
         }
-        
+
         // Fallback: try single object
         const objMatch = cleanedText.match(/\{[\s\S]*\}/);
         if (objMatch) {
           try {
             const r = JSON.parse(objMatch[0]);
-            return [{ 
-              name: r.name || r.food || 'AI辨識', 
-              kcal: Number(r.kcal) || Number(r.calories) || 300, 
-              protein: Number(r.protein) || 15, 
-              carbs: Number(r.carbs) || Number(r.carbohydrates) || 30, 
-              fat: Number(r.fat) || 10 
+            return [{
+              name: r.name || r.food || 'AI辨識',
+              kcal: Number(r.kcal) || Number(r.calories) || 300,
+              protein: Number(r.protein) || 15,
+              carbs: Number(r.carbs) || Number(r.carbohydrates) || 30,
+              fat: Number(r.fat) || 10
             }];
           } catch(e) {
-            console.error('Single object parse error:', e);
+            // ignore
           }
         }
-        
+
         return [{ name: `辨識失敗(解析: ${cleanedText.substring(0,30)}...)`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
       } catch (e) {
-        return [{ name: `辨識失敗(例外: ${e.message || e})`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+        return [{ name: `辨識失敗(例外)`, kcal: 200, protein: 10, carbs: 25, fat: 5 }];
       }
     }
 
