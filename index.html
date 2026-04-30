@@ -779,47 +779,89 @@
       const mimeType = imageDataUrl.split(',')[0].match(/:(.*?);/)[1];
       const tagPrompt = (tag === 'strength' || tag === 'cardio')
         ? '分析這張運動照片，判斷是什麼運動，估算消耗熱量。'
-        : '分析這張食物照片，請辨識照片中所有的餐點項目（不要合併，每一項單獨列出）。例如：照片中有一碗白飯和一块雞胸肉，就要回傳兩項。';
-      const prompt = tagPrompt + ' 請回傳JSON陣列：[{"name":"餐點名稱","kcal":熱量數字,"protein":蛋白質數字,"carbs":碳水數字,"fat":脂肪數字},...]。每項都要有完整的營養數據。';
+        : '你是一位營養師。請分析這張食物照片，辨識照片中有哪些食物。';
+      const prompt = tagPrompt + '\n\n請嚴格遵守以下格式，只回傳JSON陣列，不要有其他文字：\n[{"name":"食物名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字}]';
       try {
-        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=' + GEMINI_API_KEY, {
+        console.log('Sending image to Gemini...');
+        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_API_KEY, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Data } }] }],
-            generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
+            generationConfig: { temperature: 0, maxOutputTokens: 1024 }
           })
         });
+        
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error('Gemini HTTP error:', resp.status, errText);
+          return [{ name: '辨識失敗(網路錯誤)', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+        }
+        
         const data = await resp.json();
+        console.log('Gemini response:', JSON.stringify(data).substring(0, 500));
+        
+        // Check for errors in response
+        if (data.error) {
+          console.error('Gemini API error:', data.error);
+          return [{ name: '辨識失敗(API錯誤)', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+        }
+        
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        console.log('Gemini text:', text.substring(0, 500));
+        
+        if (!text || text.trim().length === 0) {
+          console.error('Empty response from Gemini');
+          return [{ name: '辨識失敗(空回應)', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+        }
+        
+        // Clean up markdown code blocks if present
+        let cleanedText = text.replace(/```(?:json)?\s*/g, '').replace(/```/g, '').trim();
+        console.log('Cleaned text:', cleanedText.substring(0, 500));
+        
         // Try to parse as array first
-        const arrayMatch = text.match(/\[[\s\S]*\]/);
+        const arrayMatch = cleanedText.match(/\[[\s\S]*\]/);
         if (arrayMatch) {
           try {
             const items = JSON.parse(arrayMatch[0]);
             if (Array.isArray(items) && items.length > 0) {
-              return items.map(item => ({
-                name: item.name || 'AI辨識',
-                kcal: Number(item.kcal) || 200,
+              const result = items.map(item => ({
+                name: item.name || item.food || 'AI辨識',
+                kcal: Number(item.kcal) || Number(item.calories) || 200,
                 protein: Number(item.protein) || 10,
-                carbs: Number(item.carbs) || 20,
+                carbs: Number(item.carbs) || Number(item.carbohydrates) || 20,
                 fat: Number(item.fat) || 5
               }));
+              console.log('Parsed items:', result);
+              return result;
             }
           } catch(e) {
-            console.error('JSON parse error:', e);
+            console.error('JSON parse error:', e, arrayMatch[0]);
           }
         }
+        
         // Fallback: try single object
-        const jsonMatch = text.match(/\{[^{}]*\}/);
-        if (jsonMatch) {
-          const r = JSON.parse(jsonMatch[0]);
-          return [{ name: r.name || 'AI辨識', kcal: Number(r.kcal)||300, protein: Number(r.protein)||15, carbs: Number(r.carbs)||30, fat: Number(r.fat)||10 }];
+        const objMatch = cleanedText.match(/\{[\s\S]*\}/);
+        if (objMatch) {
+          try {
+            const r = JSON.parse(objMatch[0]);
+            return [{ 
+              name: r.name || r.food || 'AI辨識', 
+              kcal: Number(r.kcal) || Number(r.calories) || 300, 
+              protein: Number(r.protein) || 15, 
+              carbs: Number(r.carbs) || Number(r.carbohydrates) || 30, 
+              fat: Number(r.fat) || 10 
+            }];
+          } catch(e) {
+            console.error('Single object parse error:', e);
+          }
         }
-        return [{ name: 'AI辨識', kcal: 300, protein: 15, carbs: 30, fat: 10 }];
+        
+        console.error('Could not parse Gemini response, raw:', text);
+        return [{ name: '辨識失敗(解析錯誤)', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
       } catch (e) {
-        console.error('Gemini Error:', e);
-        return [{ name: '辨識失敗', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
+        console.error('Gemini Exception:', e);
+        return [{ name: '辨識失敗(例外)', kcal: 200, protein: 10, carbs: 25, fat: 5 }];
       }
     }
 
